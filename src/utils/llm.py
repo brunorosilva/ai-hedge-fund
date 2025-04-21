@@ -1,13 +1,73 @@
 """Helper functions for LLM"""
 
 import json
-from typing import TypeVar, Type, Optional, Any
+from typing import TypeVar, Type, Optional, Any, Dict, List
 from pydantic import BaseModel
 from utils.progress import progress
+import os
+from langchain_openai import ChatOpenAI
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from dotenv import load_dotenv
+from utils.ollama_utils import call_ollama, get_available_models
 
 T = TypeVar('T', bound=BaseModel)
 
-def call_llm(
+# Load environment variables
+load_dotenv()
+
+# Get API key and model configuration
+api_key = os.getenv("OPENAI_API_KEY")
+model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
+use_ollama = os.getenv("USE_OLLAMA", "false").lower() == "true"
+ollama_model = os.getenv("OLLAMA_MODEL", "llama3.1")
+
+# Initialize LLM if using OpenAI
+llm = None
+if not use_ollama and api_key:
+    llm = ChatOpenAI(
+        model=model_name,
+        temperature=temperature,
+        api_key=api_key
+    )
+
+def call_llm(prompt: Any, output_format: Optional[str] = None) -> Any:
+    """
+    Call the LLM with a prompt and optionally parse the output.
+    
+    Args:
+        prompt: The prompt to send to the LLM
+        output_format: Optional output format specification for JSON parsing
+        
+    Returns:
+        The LLM response, optionally parsed according to the output format
+    """
+    if use_ollama:
+        return call_ollama(prompt, model_name=ollama_model, output_format=output_format)
+    elif llm:
+        if output_format:
+            # Create a parser for the specified output format
+            parser = JsonOutputParser()
+            
+            # Create a prompt template that includes the output format
+            prompt_template = ChatPromptTemplate.from_messages([
+                prompt.messages[0],
+                ("system", f"Format your response as a valid JSON object with the following structure: {output_format}")
+            ])
+            
+            # Create a chain with the prompt, LLM, and parser
+            chain = prompt_template | llm | parser
+            
+            # Run the chain
+            return chain.invoke({})
+        else:
+            # Just run the prompt with the LLM
+            return llm.invoke(prompt).content
+    else:
+        raise ValueError("No LLM available. Please set OPENAI_API_KEY or USE_OLLAMA=true")
+
+def call_llm_with_model(
     prompt: Any,
     model_name: str,
     model_provider: str,
@@ -31,6 +91,39 @@ def call_llm(
     Returns:
         An instance of the specified Pydantic model
     """
+    # Use Ollama if specified
+    if use_ollama or model_provider.lower() == "ollama":
+        for attempt in range(max_retries):
+            try:
+                if agent_name:
+                    progress.update_status(agent_name, None, f"Calling Ollama - attempt {attempt + 1}/{max_retries}")
+                
+                # Get the model schema
+                schema = pydantic_model.model_json_schema()
+                
+                # Call Ollama with the schema
+                result = call_ollama(prompt, model_name=ollama_model, output_format=str(schema))
+                
+                if result and isinstance(result, dict):
+                    return pydantic_model(**result)
+                
+                if attempt == max_retries - 1 and default_factory:
+                    return default_factory()
+                
+            except Exception as e:
+                if agent_name:
+                    progress.update_status(agent_name, None, f"Error - retry {attempt + 1}/{max_retries}")
+                
+                if attempt == max_retries - 1:
+                    print(f"Error in Ollama call after {max_retries} attempts: {e}")
+                    if default_factory:
+                        return default_factory()
+                    return create_default_response(pydantic_model)
+        
+        # Fallback
+        return create_default_response(pydantic_model)
+    
+    # Use OpenAI or other providers
     from llm.models import get_model, get_model_info
     
     model_info = get_model_info(model_name)

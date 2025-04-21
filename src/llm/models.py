@@ -37,7 +37,7 @@ class LLMModel(BaseModel):
             return False
         # Only certain Ollama models support JSON mode
         if self.is_ollama():
-            return "llama3" in self.model_name or "neural-chat" in self.model_name
+            return "llama3.1" in self.model_name or "neural-chat" in self.model_name
         return True
     
     def is_deepseek(self) -> bool:

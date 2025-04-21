@@ -4,8 +4,43 @@ from rich.table import Table
 from rich.style import Style
 from rich.text import Text
 from typing import Dict, Optional
+import time
 
 console = Console()
+
+
+class ProgressTracker:
+    """Simple progress tracker for agents."""
+    
+    def __init__(self):
+        self.status = {}
+        self.start_times = {}
+    
+    def update_status(self, agent: str, item: str, status: str) -> None:
+        """Update the status of an agent's processing."""
+        if agent not in self.status:
+            self.status[agent] = {}
+            self.start_times[agent] = {}
+        
+        self.status[agent][item] = status
+        
+        if item not in self.start_times[agent]:
+            self.start_times[agent][item] = time.time()
+    
+    def get_status(self, agent: str, item: str) -> str:
+        """Get the current status of an agent's processing."""
+        return self.status.get(agent, {}).get(item, "Unknown")
+    
+    def get_elapsed_time(self, agent: str, item: str) -> float:
+        """Get the elapsed time for an agent's processing."""
+        if agent in self.start_times and item in self.start_times[agent]:
+            return time.time() - self.start_times[agent][item]
+        return 0.0
+    
+    def reset(self) -> None:
+        """Reset the progress tracker."""
+        self.status = {}
+        self.start_times = {}
 
 
 class AgentProgress:
@@ -83,5 +118,5 @@ class AgentProgress:
             self.table.add_row(status_text)
 
 
-# Create a global instance
-progress = AgentProgress()
+# Global progress tracker instance
+progress = ProgressTracker()
